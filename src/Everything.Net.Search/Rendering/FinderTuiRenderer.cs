@@ -47,7 +47,7 @@ internal sealed class FinderTuiRenderer
 
         var layout = new Layout("Root")
             .SplitRows(
-                new Layout("Top").Size(3),
+                new Layout("Top").Size(4),
                 new Layout("Body"),
                 new Layout("Bottom").Size(2));
 
@@ -71,10 +71,16 @@ internal sealed class FinderTuiRenderer
         var query = string.IsNullOrWhiteSpace(state.Options.QueryText)
             ? "(type to search)"
             : state.Options.QueryText;
+        var metaArea = new Rectangle(
+            area.X,
+            area.Y + 2,
+            area.Width,
+            Math.Max(0, area.Height - 2));
 
         var lines = new Text(
         [
-            TextLine.FromMarkup($"[bold deepskyblue1]>[/] {EscapeMarkup(query)}"),
+            TextLine.FromMarkup($"[bold deepskyblue1]>[/] [white]{EscapeMarkup(query)}[/]"),
+            TextLine.FromString(string.Empty),
             TextLine.FromMarkup(
                 $"[grey]{FormatResultType(state.Options.ResultType)}[/] | " +
                 $"[grey]{EscapeMarkup(SearchSortParser.Display(state.Options.Sort))}[/] | " +
@@ -107,7 +113,7 @@ internal sealed class FinderTuiRenderer
             inner.Width,
             Math.Max(0, inner.Height - 1));
 
-        VisibleResultRows = Math.Max(1, contentArea.Height);
+        VisibleResultRows = Math.Max(1, contentArea.Height / FinderResultListItem.GetItemHeight(state.Options));
 
         context.Render(
             Text.FromMarkup($"[bold]Results[/] [grey]({state.VisibleResults.Count})[/]"),
@@ -149,7 +155,7 @@ internal sealed class FinderTuiRenderer
             _results.Items.Add(new FinderResultListItem(state.VisibleResults[index], state.Options, index));
         }
 
-            _results.SelectedIndex = state.VisibleResults.Count == 0 ? null : state.SelectedIndex;
+        _results.SelectedIndex = state.VisibleResults.Count == 0 ? null : state.SelectedIndex;
         context.Render(_results, contentArea);
     }
 
@@ -250,23 +256,6 @@ internal sealed class FinderTuiRenderer
         return flags.Count == 0 ? "default" : string.Join(", ", flags);
     }
 
-    private static string CompactParentPath(string? path)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            return ".";
-        }
-
-        var normalized = path.Replace('\\', '/');
-        var parts = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length <= 2)
-        {
-            return normalized;
-        }
-
-        return $"{parts[0]}/.../{parts[^1]}";
-    }
-
     private static string FormatSize(long? bytes)
     {
         if (bytes is null)
@@ -324,29 +313,40 @@ internal sealed class FinderTuiRenderer
         SearchCliOptions options,
         int index) : ListWidgetItem
     {
+        public static int GetItemHeight(SearchCliOptions options) => options.ShowDetails ? 3 : 2;
+
         protected override Text CreateText(bool isSelected)
         {
-            var typeStyle = result.IsFolder
-                ? new Style(Color.CornflowerBlue)
-                : new Style(Color.Green);
-            var row = new TextLine(
+            var rowNumber = $"{options.Offset + (uint)index + 1,4} ";
+            var titleWidth = Math.Max(12, options.ShowDetails ? 58 : 70);
+            var title = new TextLine(
             [
-                new TextSpan($"{options.Offset + (uint)index + 1,4} ", DimStyle),
-                new TextSpan(result.IsFolder ? "d " : "f ", typeStyle),
-                new TextSpan(Truncate(result.FileName, options.ShowDetails ? 28 : 36)),
-                new TextSpan("  "),
-                new TextSpan(Truncate(CompactParentPath(result.Path), options.ShowDetails ? 22 : 28), DimStyle)
+                new TextSpan(rowNumber, DimStyle),
+                new TextSpan(Truncate(result.FileName, titleWidth))
+            ]);
+
+            var pathText = string.IsNullOrWhiteSpace(result.Path) ? "." : result.Path;
+
+            var path = new TextLine(
+            [
+                new TextSpan(new string(' ', rowNumber.Length), DimStyle),
+                new TextSpan(pathText, DimStyle)
             ]);
 
             if (options.ShowDetails)
             {
-                row.Spans.Add(new TextSpan("  "));
-                row.Spans.Add(new TextSpan(FormatSize(result.Size), DimStyle));
-                row.Spans.Add(new TextSpan("  "));
-                row.Spans.Add(new TextSpan(FormatDate(result.DateModified), DimStyle));
+                var details = new TextLine(
+                [
+                    new TextSpan(new string(' ', rowNumber.Length), DimStyle),
+                    new TextSpan($"modified {FormatDate(result.DateModified)}", DimStyle),
+                    new TextSpan("  ", DimStyle),
+                    new TextSpan(result.IsFolder ? "folder" : $"size {FormatSize(result.Size)}", DimStyle)
+                ]);
+
+                return new Text([title, path, details]);
             }
 
-            return new Text(row);
+            return new Text([title, path]);
         }
     }
 

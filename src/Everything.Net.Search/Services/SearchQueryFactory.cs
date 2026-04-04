@@ -11,11 +11,12 @@ internal static class SearchQueryFactory
         var flags =
             EverythingRequestFlags.FileName |
             EverythingRequestFlags.Path |
-            EverythingRequestFlags.Extension;
+            EverythingRequestFlags.Extension |
+            EverythingRequestFlags.Size;
 
         if (options.ShowDetails)
         {
-            flags |= EverythingRequestFlags.Size | EverythingRequestFlags.DateModified;
+            flags |= EverythingRequestFlags.DateModified;
         }
 
         return new EverythingQuery

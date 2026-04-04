@@ -8,7 +8,6 @@ internal sealed record FinderViewState(
     string? ErrorMessage,
     bool ShowHelp,
     int SelectedIndex,
-    int ResultScrollOffset,
     int PreviewScrollOffset,
     FinderPreviewContent Preview)
 {
