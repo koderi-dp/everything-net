@@ -1,0 +1,21 @@
+<Solution>
+  <Folder Name="/Build/">
+    <File Path="../.editorconfig" />
+    <File Path="../build.cs" />
+    <File Path="../global.json" />
+    <File Path="../NuGet.Config" />
+    <File Path="../.config/dotnet-tools.json" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Build.targets" />
+    <File Path="Directory.Packages.props" />
+  </Folder>
+  <Folder Name="/examples/">
+    <Project Path="Everything.Net.Search/Everything.Net.Search.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="Everything.Net/Everything.Net.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="Everything.Net.Tests/Everything.Net.Tests.csproj" />
+  </Folder>
+</Solution>

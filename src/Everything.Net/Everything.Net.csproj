@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>Everything.Net</AssemblyName>
+    <RootNamespace>Everything.Net</RootNamespace>
+    <Description>Typed .NET wrapper for the voidtools Everything SDK with DI support and x64/ARM64 native support.</Description>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Options" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="runtimes\win-arm64\native\EverythingARM64.dll" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="runtimes\win-x64\native\Everything64.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
