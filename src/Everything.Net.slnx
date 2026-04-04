@@ -1,5 +1,5 @@
 <Solution>
-  <Folder Name="/Build/">
+  <Folder Name="/build/">
     <File Path="../.editorconfig" />
     <File Path="../build.cs" />
     <File Path="../global.json" />

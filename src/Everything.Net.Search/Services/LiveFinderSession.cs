@@ -3,13 +3,14 @@ using Everything.Net.Models;
 using Everything.Net.Search.Models;
 using Everything.Net.Search.Rendering;
 using Everything.Net.Services;
-using Spectre.Console;
+using Spectre.Tui;
 
 namespace Everything.Net.Search.Services;
 
 internal sealed class LiveFinderSession(EverythingClient client)
 {
     private readonly FinderPreviewService _previewService = new();
+    private const int DefaultVisibleRows = 10;
 
     public async Task<int> RunAsync(SearchCliOptions initialOptions)
     {
@@ -20,81 +21,122 @@ internal sealed class LiveFinderSession(EverythingClient client)
             null,
             false,
             0,
+            0,
+            0,
             FinderPreviewContent.Empty("Preview", "Start typing to search."));
         var buffer = new StringBuilder(options.QueryText);
         var pendingSearch = !string.IsNullOrWhiteSpace(options.QueryText);
         var originalTreatControlCAsInput = Console.TreatControlCAsInput;
+        var finderRenderer = new FinderTuiRenderer();
 
         Console.TreatControlCAsInput = true;
 
         try
         {
-            await AnsiConsole.Live(SearchConsoleRenderer.RenderLiveFinder(state))
-                .Overflow(VerticalOverflow.Ellipsis)
-                .Cropping(VerticalOverflowCropping.Bottom)
-                .AutoClear(false)
-                .StartAsync(async context =>
+            using var terminal = Terminal.Create();
+            var renderer = new Renderer(terminal);
+            renderer.SetTargetFps(30);
+
+            while (true)
+            {
+                if (pendingSearch)
                 {
-                    while (true)
+                    state = await SearchAsync(state with
                     {
-                        if (pendingSearch)
-                        {
-                            state = await SearchAsync(state with
-                            {
-                                Options = state.Options with { QueryText = buffer.ToString() }
-                            });
-                            pendingSearch = false;
-                        }
-                        else
-                        {
-                            state = state with { Options = state.Options with { QueryText = buffer.ToString() } };
-                        }
+                        Options = state.Options with { QueryText = buffer.ToString() }
+                    });
+                    pendingSearch = false;
+                }
+                else
+                {
+                    state = state with { Options = state.Options with { QueryText = buffer.ToString() } };
+                }
 
-                        context.UpdateTarget(SearchConsoleRenderer.RenderLiveFinder(state));
+                state = ClampViewportState(
+                    state,
+                    finderRenderer.VisibleResultRows,
+                    finderRenderer.VisiblePreviewLines);
 
-                        var key = Console.ReadKey(intercept: true);
-                        var action = HandleKey(key, state.Options, buffer);
+                renderer.Draw((context, _) => finderRenderer.Render(context, state));
 
-                        if (action.ExitRequested)
-                        {
-                            return;
-                        }
+                state = ClampViewportState(
+                    state,
+                    finderRenderer.VisibleResultRows,
+                    finderRenderer.VisiblePreviewLines);
 
-                        options = action.Options;
-                        state = state with
-                        {
-                            Options = options with { QueryText = buffer.ToString() },
-                            ErrorMessage = action.ErrorMessage,
-                            ShowHelp = action.ToggleHelpRequested ? !state.ShowHelp : state.ShowHelp,
-                            SelectedIndex = action.SelectedIndexDelta.HasValue
-                                ? state.SelectedIndex + action.SelectedIndexDelta.Value
-                                : state.SelectedIndex
-                        };
+                if (!Console.KeyAvailable)
+                {
+                    await Task.Delay(16);
+                    continue;
+                }
 
-                        if (action.ResetSelection)
-                        {
-                            state = state with { SelectedIndex = 0 };
-                        }
+                var key = Console.ReadKey(intercept: true);
+                var action = HandleKey(
+                    key,
+                    state.Options,
+                    buffer,
+                    finderRenderer.VisibleResultRows,
+                    finderRenderer.VisiblePreviewLines);
 
-                        if (state.SelectedResult is null)
-                        {
-                            state = state with { SelectedIndex = 0 };
-                        }
-                        else if (state.SelectedIndex >= state.VisibleResults.Count)
-                        {
-                            state = state with { SelectedIndex = state.VisibleResults.Count - 1 };
-                        }
+                if (action.ExitRequested)
+                {
+                    break;
+                }
 
-                        state = state with { Preview = _previewService.Build(state.SelectedResult) };
+                options = action.Options;
+                var previousSelection = state.SelectedIndex;
+                state = state with
+                {
+                    Options = options with { QueryText = buffer.ToString() },
+                    ErrorMessage = action.ErrorMessage,
+                    ShowHelp = action.ToggleHelpRequested ? !state.ShowHelp : state.ShowHelp,
+                    SelectedIndex = action.ResetSelection
+                        ? 0
+                        : state.SelectedIndex + action.SelectedIndexDelta
+                };
 
-                        pendingSearch = action.TriggerSearch;
-                    }
-                });
+                if (state.SelectedResult is null)
+                {
+                    state = state with { SelectedIndex = 0, ResultScrollOffset = 0 };
+                }
+                else if (state.SelectedIndex >= state.VisibleResults.Count)
+                {
+                    state = state with { SelectedIndex = state.VisibleResults.Count - 1 };
+                }
+
+                var selectionChanged = previousSelection != state.SelectedIndex;
+                if (selectionChanged)
+                {
+                    state = state with
+                    {
+                        Preview = _previewService.Build(state.SelectedResult),
+                        PreviewScrollOffset = 0
+                    };
+                }
+                else if (action.ResetPreviewScroll)
+                {
+                    state = state with { PreviewScrollOffset = 0 };
+                }
+                else if (action.PreviewScrollDelta != 0)
+                {
+                    state = state with
+                    {
+                        PreviewScrollOffset = state.PreviewScrollOffset + action.PreviewScrollDelta
+                    };
+                }
+
+                state = ClampViewportState(
+                    state,
+                    finderRenderer.VisibleResultRows,
+                    finderRenderer.VisiblePreviewLines);
+
+                pendingSearch = action.TriggerSearch;
+            }
         }
         finally
         {
             Console.TreatControlCAsInput = originalTreatControlCAsInput;
-            AnsiConsole.Clear();
+            Console.Clear();
             SearchConsoleRenderer.RenderHeader();
         }
 
@@ -110,6 +152,8 @@ internal sealed class LiveFinderSession(EverythingClient client)
                 Response = null,
                 ErrorMessage = null,
                 SelectedIndex = 0,
+                ResultScrollOffset = 0,
+                PreviewScrollOffset = 0,
                 Preview = FinderPreviewContent.Empty("Preview", "Start typing to search.")
             };
         }
@@ -123,6 +167,8 @@ internal sealed class LiveFinderSession(EverythingClient client)
                 Response = null,
                 ErrorMessage = response.ErrorMessage ?? response.ErrorCode.ToString(),
                 SelectedIndex = 0,
+                ResultScrollOffset = 0,
+                PreviewScrollOffset = 0,
                 Preview = FinderPreviewContent.Empty("Preview", response.ErrorMessage ?? response.ErrorCode.ToString())
             };
         }
@@ -162,7 +208,12 @@ internal sealed class LiveFinderSession(EverythingClient client)
         }
     }
 
-    private static LiveFinderAction HandleKey(ConsoleKeyInfo key, SearchCliOptions options, StringBuilder query)
+    private static LiveFinderAction HandleKey(
+        ConsoleKeyInfo key,
+        SearchCliOptions options,
+        StringBuilder query,
+        int visibleResultRows,
+        int visiblePreviewLines)
     {
         if (!char.IsControl(key.KeyChar) && key.Key != ConsoleKey.Backspace)
         {
@@ -172,8 +223,10 @@ internal sealed class LiveFinderSession(EverythingClient client)
 
         if (key.Modifiers.HasFlag(ConsoleModifiers.Control))
         {
-            return HandleControlKey(key, options, query);
+            return HandleControlKey(key, options, query, visiblePreviewLines);
         }
+
+        var pageSize = (uint)Math.Max(1, visibleResultRows);
 
         return key.Key switch
         {
@@ -182,8 +235,8 @@ internal sealed class LiveFinderSession(EverythingClient client)
             ConsoleKey.Escape => LiveFinderAction.Exit(options),
             ConsoleKey.UpArrow => LiveFinderAction.MoveSelection(options, selectedIndexDelta: -1),
             ConsoleKey.DownArrow => LiveFinderAction.MoveSelection(options, selectedIndexDelta: 1),
-            ConsoleKey.PageDown => LiveFinderAction.Search(options with { Offset = options.Offset + options.Limit }, resetSelection: true),
-            ConsoleKey.PageUp => LiveFinderAction.Search(options with { Offset = options.Offset > options.Limit ? options.Offset - options.Limit : 0 }, resetSelection: true),
+            ConsoleKey.PageDown => LiveFinderAction.Search(options with { Offset = options.Offset + pageSize }, resetSelection: true),
+            ConsoleKey.PageUp => LiveFinderAction.Search(options with { Offset = options.Offset > pageSize ? options.Offset - pageSize : 0 }, resetSelection: true),
             ConsoleKey.Tab => LiveFinderAction.Search(options with
             {
                 ResultType = NextResultType(options.ResultType),
@@ -202,13 +255,19 @@ internal sealed class LiveFinderSession(EverythingClient client)
         };
     }
 
-    private static LiveFinderAction HandleControlKey(ConsoleKeyInfo key, SearchCliOptions options, StringBuilder query)
+    private static LiveFinderAction HandleControlKey(
+        ConsoleKeyInfo key,
+        SearchCliOptions options,
+        StringBuilder query,
+        int visiblePreviewLines)
     {
+        var previewPage = Math.Max(1, visiblePreviewLines / 2);
+
         return key.Key switch
         {
             ConsoleKey.L => ClearQuery(options, query),
             ConsoleKey.F => LiveFinderAction.Search(options with { ResultType = SearchResultType.Files, Offset = 0 }, resetSelection: true),
-            ConsoleKey.D => LiveFinderAction.Search(options with { ShowDetails = !options.ShowDetails }, resetSelection: false),
+            ConsoleKey.D => LiveFinderAction.ScrollPreview(options, previewPage),
             ConsoleKey.R => LiveFinderAction.Search(options with { Regex = !options.Regex, Offset = 0 }, resetSelection: true),
             ConsoleKey.P => LiveFinderAction.Search(options with { MatchPath = !options.MatchPath, Offset = 0 }, resetSelection: true),
             ConsoleKey.W => LiveFinderAction.Search(options with { MatchWholeWord = !options.MatchWholeWord, Offset = 0 }, resetSelection: true),
@@ -217,6 +276,9 @@ internal sealed class LiveFinderSession(EverythingClient client)
             ConsoleKey.O => LiveFinderAction.Search(options with { ResultType = SearchResultType.Folders, Offset = 0 }, resetSelection: true),
             ConsoleKey.H => LiveFinderAction.ToggleHelp(options),
             ConsoleKey.Q => LiveFinderAction.Exit(options),
+            ConsoleKey.U => LiveFinderAction.ScrollPreview(options, -previewPage),
+            ConsoleKey.DownArrow => LiveFinderAction.ScrollPreview(options, 1),
+            ConsoleKey.UpArrow => LiveFinderAction.ScrollPreview(options, -1),
             _ => LiveFinderAction.None(options)
         };
     }
@@ -260,28 +322,70 @@ internal sealed class LiveFinderSession(EverythingClient client)
         };
     }
 
+    private static FinderViewState ClampViewportState(
+        FinderViewState state,
+        int visibleResultRows,
+        int visiblePreviewLines)
+    {
+        var safeResultRows = Math.Max(1, visibleResultRows);
+        var safePreviewLines = Math.Max(1, visiblePreviewLines);
+        var visibleResults = state.VisibleResults;
+
+        var selectedIndex = visibleResults.Count == 0
+            ? 0
+            : Math.Clamp(state.SelectedIndex, 0, visibleResults.Count - 1);
+
+        var maxResultOffset = Math.Max(0, visibleResults.Count - safeResultRows);
+        var resultScrollOffset = Math.Clamp(state.ResultScrollOffset, 0, maxResultOffset);
+
+        if (selectedIndex < resultScrollOffset)
+        {
+            resultScrollOffset = selectedIndex;
+        }
+        else if (selectedIndex >= resultScrollOffset + safeResultRows)
+        {
+            resultScrollOffset = selectedIndex - safeResultRows + 1;
+        }
+
+        var previewLineCount = FinderTuiRenderer.GetPreviewLineCount(state);
+        var maxPreviewOffset = Math.Max(0, previewLineCount - safePreviewLines);
+        var previewScrollOffset = Math.Clamp(state.PreviewScrollOffset, 0, maxPreviewOffset);
+
+        return state with
+        {
+            SelectedIndex = selectedIndex,
+            ResultScrollOffset = resultScrollOffset,
+            PreviewScrollOffset = previewScrollOffset
+        };
+    }
+
     private sealed record LiveFinderAction(
         SearchCliOptions Options,
         bool TriggerSearch,
         bool ExitRequested,
         bool ResetSelection,
         bool ToggleHelpRequested,
+        bool ResetPreviewScroll,
         string? ErrorMessage,
-        int? SelectedIndexDelta)
+        int SelectedIndexDelta,
+        int PreviewScrollDelta)
     {
         public static LiveFinderAction None(SearchCliOptions options) =>
-            new(options, false, false, false, false, null, null);
+            new(options, false, false, false, false, false, null, 0, 0);
 
         public static LiveFinderAction Search(SearchCliOptions options, bool resetSelection) =>
-            new(options, true, false, resetSelection, false, null, null);
+            new(options, true, false, resetSelection, false, true, null, 0, 0);
 
         public static LiveFinderAction Exit(SearchCliOptions options) =>
-            new(options, false, true, false, false, null, null);
+            new(options, false, true, false, false, false, null, 0, 0);
 
         public static LiveFinderAction ToggleHelp(SearchCliOptions options) =>
-            new(options, false, false, false, true, null, null);
+            new(options, false, false, false, true, false, null, 0, 0);
 
         public static LiveFinderAction MoveSelection(SearchCliOptions options, int selectedIndexDelta) =>
-            new(options, false, false, false, false, null, selectedIndexDelta);
+            new(options, false, false, false, false, false, null, selectedIndexDelta, 0);
+
+        public static LiveFinderAction ScrollPreview(SearchCliOptions options, int previewScrollDelta) =>
+            new(options, false, false, false, false, false, null, 0, previewScrollDelta);
     }
 }

@@ -46,7 +46,7 @@ internal sealed class FinderPreviewService
                 return BuildMetadata(selected, "Metadata");
             }
 
-            var lines = ReadPreviewLines(selected.FullPath, maxLines: 28, maxCharsPerLine: 76);
+            var lines = ReadPreviewLines(selected.FullPath, maxLines: 200, maxCharsPerLine: 240);
             if (lines.Count == 0)
             {
                 return FinderPreviewContent.Empty("Preview", "File is empty.");

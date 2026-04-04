@@ -5,7 +5,6 @@ using Everything.Net.Search.Rendering;
 using Everything.Net.Search.Services;
 using Everything.Net.Services;
 using Microsoft.Extensions.Options;
-using Spectre.Console;
 
 namespace Everything.Net.Search.App;
 
@@ -22,7 +21,7 @@ internal static class SearchApplication
         catch (ArgumentException ex)
         {
             SearchConsoleRenderer.RenderHeader();
-            AnsiConsole.MarkupLine($"[red]Argument error:[/] {Markup.Escape(ex.Message)}");
+            Console.WriteLine($"Argument error: {ex.Message}");
             SearchConsoleRenderer.RenderHelp();
             return 1;
         }
@@ -60,7 +59,7 @@ internal static class SearchApplication
     {
         if (string.IsNullOrWhiteSpace(options.QueryText))
         {
-            AnsiConsole.MarkupLine("[red]A search query is required.[/]");
+            Console.WriteLine("A search query is required.");
             SearchConsoleRenderer.RenderHelp();
             return 1;
         }
@@ -82,9 +81,7 @@ internal static class SearchApplication
 
         try
         {
-            return await AnsiConsole.Status()
-                .Spinner(Spinner.Known.Dots)
-                .StartAsync("Searching Everything index...", async _ => await client.SearchAsync(query));
+            return await client.SearchAsync(query);
         }
         catch (Exception ex)
         {
