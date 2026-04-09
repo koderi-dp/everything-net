@@ -1,6 +1,15 @@
 # Everything.Net
 
-Typed .NET 10 wrapper for the voidtools Everything SDK.
+[![NuGet](https://img.shields.io/nuget/v/Voidtools.Everything.Net.svg)](https://www.nuget.org/packages/Voidtools.Everything.Net/)
+
+Typed .NET wrapper for the voidtools Everything SDK.
+
+NuGet package: `Voidtools.Everything.Net`
+
+Supported target frameworks:
+
+- `net8.0`
+- `net10.0`
 
 ## Supported architectures
 
@@ -60,9 +69,7 @@ foreach (var item in response.Results)
 
 ## Native DLL packaging
 
-If you are building a NuGet package, place the native DLLs here:
+The NuGet package includes the native Everything SDK DLLs as runtime assets:
 
 - `runtimes/win-x64/native/Everything64.dll`
 - `runtimes/win-arm64/native/EverythingARM64.dll`
-
-This project intentionally does not include the vendor DLLs.

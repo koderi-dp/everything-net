@@ -8,10 +8,14 @@ using Microsoft.Extensions.Options;
 
 namespace Everything.Net.Services;
 
+/// <summary>
+/// Default implementation of <see cref="IEverythingClient"/> backed by the native Everything SDK.
+/// </summary>
 public sealed class EverythingClient(IOptions<EverythingClientOptions> options) : IEverythingClient
 {
     private readonly EverythingClientOptions _options = options.Value;
 
+    /// <inheritdoc />
     public bool IsAvailable()
     {
         try
@@ -32,6 +36,7 @@ public sealed class EverythingClient(IOptions<EverythingClientOptions> options) 
         }
     }
 
+    /// <inheritdoc />
     public EverythingQueryResponse Search(EverythingQuery query)
     {
         ArgumentNullException.ThrowIfNull(query);
@@ -82,6 +87,7 @@ public sealed class EverythingClient(IOptions<EverythingClientOptions> options) 
         }
     }
 
+    /// <inheritdoc />
     public Task<EverythingQueryResponse> SearchAsync(
         EverythingQuery query,
         CancellationToken cancellationToken = default)
@@ -117,7 +123,7 @@ public sealed class EverythingClient(IOptions<EverythingClientOptions> options) 
         }
     }
 
-    private IReadOnlyList<EverythingSearchResult> ReadResults(uint total, EverythingRequestFlags requestFlags)
+    private static IReadOnlyList<EverythingSearchResult> ReadResults(uint total, EverythingRequestFlags requestFlags)
     {
         var list = new List<EverythingSearchResult>((int)total);
 

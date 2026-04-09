@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using Everything.Net.Models;
 using Everything.Net.Search.Models;
@@ -20,6 +21,8 @@ internal sealed class LiveFinderSession(EverythingClient client)
             null,
             null,
             false,
+            FinderPaneFocus.Results,
+            0,
             0,
             0,
             FinderPreviewContent.Empty("Preview", "Start typing to search."));
@@ -51,11 +54,11 @@ internal sealed class LiveFinderSession(EverythingClient client)
                     state = state with { Options = state.Options with { QueryText = buffer.ToString() } };
                 }
 
-                state = ClampViewportState(state, finderRenderer.VisiblePreviewLines);
+                state = ClampViewportState(state, finderRenderer.VisiblePreviewLines, finderRenderer.VisiblePreviewWidth);
 
                 renderer.Draw((context, _) => finderRenderer.Render(context, state));
 
-                state = ClampViewportState(state, finderRenderer.VisiblePreviewLines);
+                state = ClampViewportState(state, finderRenderer.VisiblePreviewLines, finderRenderer.VisiblePreviewWidth);
 
                 var desiredLimit = (uint)Math.Max(1, finderRenderer.VisibleResultRows);
                 if (state.Options.Limit != desiredLimit)
@@ -86,11 +89,23 @@ internal sealed class LiveFinderSession(EverythingClient client)
 
                 options = action.Options;
                 var previousSelection = state.SelectedIndex;
+                var actionError = action.ErrorMessage;
+
+                if (action.OpenSelectedItem)
+                {
+                    actionError = TryOpenSelectedItem(state.SelectedResult);
+                }
+                else if (action.RevealSelectedItemInExplorer)
+                {
+                    actionError = TryRevealSelectedItemInExplorer(state.SelectedResult);
+                }
+
                 state = state with
                 {
                     Options = options with { QueryText = buffer.ToString() },
-                    ErrorMessage = action.ErrorMessage,
+                    ErrorMessage = actionError,
                     ShowHelp = action.ToggleHelpRequested ? !state.ShowHelp : state.ShowHelp,
+                    Focus = action.FocusOverride ?? state.Focus,
                     SelectedIndex = action.SelectedIndexOverride ?? state.SelectedIndex
                 };
 
@@ -109,12 +124,13 @@ internal sealed class LiveFinderSession(EverythingClient client)
                     state = state with
                     {
                         Preview = _previewService.Build(state.SelectedResult),
-                        PreviewScrollOffset = 0
+                        PreviewScrollOffset = 0,
+                        PreviewHorizontalOffset = 0
                     };
                 }
                 else if (action.ResetPreviewScroll)
                 {
-                    state = state with { PreviewScrollOffset = 0 };
+                    state = state with { PreviewScrollOffset = 0, PreviewHorizontalOffset = 0 };
                 }
                 else if (action.PreviewScrollDelta != 0)
                 {
@@ -123,10 +139,27 @@ internal sealed class LiveFinderSession(EverythingClient client)
                         PreviewScrollOffset = state.PreviewScrollOffset + action.PreviewScrollDelta
                     };
                 }
+                else if (action.PreviewScrollOverride.HasValue)
+                {
+                    state = state with { PreviewScrollOffset = action.PreviewScrollOverride.Value };
+                }
+
+                if (action.PreviewHorizontalDelta != 0)
+                {
+                    state = state with
+                    {
+                        PreviewHorizontalOffset = state.PreviewHorizontalOffset + action.PreviewHorizontalDelta
+                    };
+                }
+                else if (action.PreviewHorizontalOverride.HasValue)
+                {
+                    state = state with { PreviewHorizontalOffset = action.PreviewHorizontalOverride.Value };
+                }
 
                 state = ClampViewportState(
                     state,
-                    finderRenderer.VisiblePreviewLines);
+                    finderRenderer.VisiblePreviewLines,
+                    finderRenderer.VisiblePreviewWidth);
 
                 pendingSearch = action.TriggerSearch;
             }
@@ -151,6 +184,7 @@ internal sealed class LiveFinderSession(EverythingClient client)
                 ErrorMessage = null,
                 SelectedIndex = 0,
                 PreviewScrollOffset = 0,
+                PreviewHorizontalOffset = 0,
                 Preview = FinderPreviewContent.Empty("Preview", "Start typing to search.")
             };
         }
@@ -165,6 +199,7 @@ internal sealed class LiveFinderSession(EverythingClient client)
                 ErrorMessage = response.ErrorMessage ?? response.ErrorCode.ToString(),
                 SelectedIndex = 0,
                 PreviewScrollOffset = 0,
+                PreviewHorizontalOffset = 0,
                 Preview = FinderPreviewContent.Empty("Preview", response.ErrorMessage ?? response.ErrorCode.ToString())
             };
         }
@@ -223,6 +258,11 @@ internal sealed class LiveFinderSession(EverythingClient client)
             return HandleControlKey(key, options, query, visiblePreviewLines);
         }
 
+        if (state.Focus == FinderPaneFocus.Preview && !state.ShowHelp)
+        {
+            return HandlePreviewKey(key, state);
+        }
+
         return key.Key switch
         {
             ConsoleKey.Backspace => HandleBackspace(options, query),
@@ -232,11 +272,7 @@ internal sealed class LiveFinderSession(EverythingClient client)
             ConsoleKey.DownArrow => HandleMoveDown(state),
             ConsoleKey.PageDown => HandlePageDown(state),
             ConsoleKey.PageUp => HandlePageUp(state),
-            ConsoleKey.Tab => LiveFinderAction.Search(options with
-            {
-                ResultType = NextResultType(options.ResultType),
-                Offset = 0
-            }, selectedIndexOverride: 0),
+            ConsoleKey.Tab => LiveFinderAction.SetFocus(options, NextFocus(state.Focus)),
             ConsoleKey.F1 => LiveFinderAction.ToggleHelp(options, resetPreviewScroll: false),
             ConsoleKey.F2 => LiveFinderAction.UpdateOptions(options with { ShowDetails = !options.ShowDetails }, resetPreviewScroll: false),
             ConsoleKey.F3 => LiveFinderAction.Search(options with
@@ -246,7 +282,32 @@ internal sealed class LiveFinderSession(EverythingClient client)
             }, selectedIndexOverride: 0),
             ConsoleKey.F4 => LiveFinderAction.Search(options with { Regex = !options.Regex, Offset = 0 }, selectedIndexOverride: 0),
             ConsoleKey.F5 => LiveFinderAction.Search(options, selectedIndexOverride: state.SelectedIndex),
+            ConsoleKey.F6 => LiveFinderAction.OpenItem(options),
+            ConsoleKey.F7 => LiveFinderAction.RevealItem(options),
             _ => LiveFinderAction.None(options)
+        };
+    }
+
+    private static LiveFinderAction HandlePreviewKey(ConsoleKeyInfo key, FinderViewState state)
+    {
+        var previewPage = Math.Max(1, (int)state.Options.Limit / 2);
+
+        return key.Key switch
+        {
+            ConsoleKey.UpArrow => LiveFinderAction.ScrollPreview(state.Options, -1),
+            ConsoleKey.DownArrow => LiveFinderAction.ScrollPreview(state.Options, 1),
+            ConsoleKey.LeftArrow => LiveFinderAction.ScrollPreviewHorizontal(state.Options, -4),
+            ConsoleKey.RightArrow => LiveFinderAction.ScrollPreviewHorizontal(state.Options, 4),
+            ConsoleKey.PageUp => LiveFinderAction.ScrollPreview(state.Options, -previewPage),
+            ConsoleKey.PageDown => LiveFinderAction.ScrollPreview(state.Options, previewPage),
+            ConsoleKey.Home => LiveFinderAction.SetPreviewScrollHorizontal(state.Options, 0),
+            ConsoleKey.End => LiveFinderAction.SetPreviewScrollHorizontal(state.Options, int.MaxValue),
+            _ => key.Key switch
+            {
+                ConsoleKey.Tab => LiveFinderAction.SetFocus(state.Options, NextFocus(state.Focus)),
+                ConsoleKey.Escape => LiveFinderAction.Exit(state.Options),
+                _ => LiveFinderAction.None(state.Options)
+            }
         };
     }
 
@@ -274,6 +335,8 @@ internal sealed class LiveFinderSession(EverythingClient client)
             ConsoleKey.U => LiveFinderAction.ScrollPreview(options, -previewPage),
             ConsoleKey.DownArrow => LiveFinderAction.ScrollPreview(options, 1),
             ConsoleKey.UpArrow => LiveFinderAction.ScrollPreview(options, -1),
+            ConsoleKey.LeftArrow => LiveFinderAction.ScrollPreviewHorizontal(options, -12),
+            ConsoleKey.RightArrow => LiveFinderAction.ScrollPreviewHorizontal(options, 12),
             _ => LiveFinderAction.None(options)
         };
     }
@@ -304,6 +367,11 @@ internal sealed class LiveFinderSession(EverythingClient client)
             _ => SearchResultType.All
         };
     }
+
+    private static FinderPaneFocus NextFocus(FinderPaneFocus current) =>
+        current == FinderPaneFocus.Results
+            ? FinderPaneFocus.Preview
+            : FinderPaneFocus.Results;
 
     private static IEnumerable<EverythingSearchResult> FilterVisibleResults(
         IReadOnlyList<EverythingSearchResult> results,
@@ -385,9 +453,11 @@ internal sealed class LiveFinderSession(EverythingClient client)
 
     private static FinderViewState ClampViewportState(
         FinderViewState state,
-        int visiblePreviewLines)
+        int visiblePreviewLines,
+        int visiblePreviewWidth)
     {
         var safePreviewLines = Math.Max(1, visiblePreviewLines);
+        var safePreviewWidth = Math.Max(1, visiblePreviewWidth);
         var visibleResults = state.VisibleResults;
 
         var selectedIndex = visibleResults.Count == 0
@@ -396,13 +466,100 @@ internal sealed class LiveFinderSession(EverythingClient client)
 
         var previewLineCount = FinderTuiRenderer.GetPreviewLineCount(state);
         var maxPreviewOffset = Math.Max(0, previewLineCount - safePreviewLines);
-        var previewScrollOffset = Math.Clamp(state.PreviewScrollOffset, 0, maxPreviewOffset);
+        var previewScrollOffset = state.PreviewScrollOffset == int.MaxValue
+            ? maxPreviewOffset
+            : Math.Clamp(state.PreviewScrollOffset, 0, maxPreviewOffset);
+        var maxPreviewHorizontalOffset = Math.Max(0, GetMaxPreviewLineWidth(state) - safePreviewWidth);
+        var previewHorizontalOffset = state.PreviewHorizontalOffset == int.MaxValue
+            ? maxPreviewHorizontalOffset
+            : Math.Clamp(state.PreviewHorizontalOffset, 0, maxPreviewHorizontalOffset);
 
         return state with
         {
             SelectedIndex = selectedIndex,
-            PreviewScrollOffset = previewScrollOffset
+            PreviewScrollOffset = previewScrollOffset,
+            PreviewHorizontalOffset = previewHorizontalOffset
         };
+    }
+
+    private static int GetMaxPreviewLineWidth(FinderViewState state)
+    {
+        var lines = state.ShowHelp
+            ? FinderTuiRenderer.GetHelpLines()
+            : state.Preview.Lines;
+
+        var maxWidth = 0;
+        foreach (var line in lines)
+        {
+            var width = line.Spans.Sum(static span => span.Text.Length);
+            if (width > maxWidth)
+            {
+                maxWidth = width;
+            }
+        }
+
+        return maxWidth + (state.Preview.IsTextPreview && !state.ShowHelp ? 5 : 0);
+    }
+
+    private static string? TryOpenSelectedItem(EverythingSearchResult? selected)
+    {
+        if (selected is null)
+        {
+            return "No item selected.";
+        }
+
+        if (!File.Exists(selected.FullPath) && !Directory.Exists(selected.FullPath))
+        {
+            return "Selected item is not available on disk.";
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = selected.FullPath,
+                UseShellExecute = true
+            });
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return $"Failed to open selected item: {ex.Message}";
+        }
+    }
+
+    private static string? TryRevealSelectedItemInExplorer(EverythingSearchResult? selected)
+    {
+        if (selected is null)
+        {
+            return "No item selected.";
+        }
+
+        if (!File.Exists(selected.FullPath) && !Directory.Exists(selected.FullPath))
+        {
+            return "Selected item is not available on disk.";
+        }
+
+        try
+        {
+            var explorerArgs = selected.IsFolder
+                ? $"\"{selected.FullPath}\""
+                : $"/select,\"{selected.FullPath}\"";
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = explorerArgs,
+                UseShellExecute = true
+            });
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return $"Failed to reveal selected item: {ex.Message}";
+        }
     }
 
     private sealed record LiveFinderAction(
@@ -412,31 +569,55 @@ internal sealed class LiveFinderSession(EverythingClient client)
         bool ToggleHelpRequested,
         bool ResetPreviewScroll,
         string? ErrorMessage,
+        FinderPaneFocus? FocusOverride,
         int? SelectedIndexOverride,
-        int PreviewScrollDelta)
+        int PreviewScrollDelta,
+        int? PreviewScrollOverride,
+        int PreviewHorizontalDelta,
+        int? PreviewHorizontalOverride,
+        bool OpenSelectedItem,
+        bool RevealSelectedItemInExplorer)
     {
         public static LiveFinderAction None(SearchCliOptions options) =>
-            new(options, false, false, false, false, null, null, 0);
+            new(options, false, false, false, false, null, null, null, 0, null, 0, null, false, false);
 
         public static LiveFinderAction Search(
             SearchCliOptions options,
             int? selectedIndexOverride,
             bool resetPreviewScroll = true) =>
-            new(options, true, false, false, resetPreviewScroll, null, selectedIndexOverride, 0);
+            new(options, true, false, false, resetPreviewScroll, null, null, selectedIndexOverride, 0, null, 0, null, false, false);
 
         public static LiveFinderAction Exit(SearchCliOptions options) =>
-            new(options, false, true, false, false, null, null, 0);
+            new(options, false, true, false, false, null, null, null, 0, null, 0, null, false, false);
 
         public static LiveFinderAction ToggleHelp(SearchCliOptions options, bool resetPreviewScroll) =>
-            new(options, false, false, true, resetPreviewScroll, null, null, 0);
+            new(options, false, false, true, resetPreviewScroll, null, null, null, 0, null, 0, null, false, false);
 
         public static LiveFinderAction Select(SearchCliOptions options, int selectedIndex) =>
-            new(options, false, false, false, true, null, selectedIndex, 0);
+            new(options, false, false, false, true, null, null, selectedIndex, 0, null, 0, null, false, false);
 
         public static LiveFinderAction UpdateOptions(SearchCliOptions options, bool resetPreviewScroll) =>
-            new(options, false, false, false, resetPreviewScroll, null, null, 0);
+            new(options, false, false, false, resetPreviewScroll, null, null, null, 0, null, 0, null, false, false);
+
+        public static LiveFinderAction SetFocus(SearchCliOptions options, FinderPaneFocus focus) =>
+            new(options, false, false, false, false, null, focus, null, 0, null, 0, null, false, false);
 
         public static LiveFinderAction ScrollPreview(SearchCliOptions options, int previewScrollDelta) =>
-            new(options, false, false, false, false, null, null, previewScrollDelta);
+            new(options, false, false, false, false, null, null, null, previewScrollDelta, null, 0, null, false, false);
+
+        public static LiveFinderAction SetPreviewScroll(SearchCliOptions options, int previewScrollOffset) =>
+            new(options, false, false, false, false, null, null, null, 0, previewScrollOffset, 0, null, false, false);
+
+        public static LiveFinderAction ScrollPreviewHorizontal(SearchCliOptions options, int previewHorizontalDelta) =>
+            new(options, false, false, false, false, null, null, null, 0, null, previewHorizontalDelta, null, false, false);
+
+        public static LiveFinderAction SetPreviewScrollHorizontal(SearchCliOptions options, int previewHorizontalOffset) =>
+            new(options, false, false, false, false, null, null, null, 0, null, 0, previewHorizontalOffset, false, false);
+
+        public static LiveFinderAction OpenItem(SearchCliOptions options) =>
+            new(options, false, false, false, false, null, null, null, 0, null, 0, null, true, false);
+
+        public static LiveFinderAction RevealItem(SearchCliOptions options) =>
+            new(options, false, false, false, false, null, null, null, 0, null, 0, null, false, true);
     }
 }

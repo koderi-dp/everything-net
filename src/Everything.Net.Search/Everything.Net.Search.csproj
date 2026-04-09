@@ -12,6 +12,8 @@
 
     <ItemGroup>
       <PackageReference Include="Spectre.Tui" />
+      <PackageReference Include="TextMateSharp" />
+      <PackageReference Include="TextMateSharp.Grammars" />
     </ItemGroup>
 
 </Project>

@@ -8,9 +8,25 @@ namespace Everything.Net.Search.Rendering;
 
 internal sealed class FinderTuiRenderer
 {
-    private static readonly Style DimStyle = new(Color.Grey);
-    private static readonly Style BorderStyle = new(Color.CadetBlue);
-    private static readonly Style SelectedStyle = new(Color.Black, Color.LightSkyBlue1);
+    private static readonly Color BaseBackgroundColor = Color.Default;
+    private static readonly Color BorderColor = new(126, 118, 148);
+    private static readonly Color AccentColor = new(214, 176, 112);
+    private static readonly Color SearchColor = new(214, 118, 152);
+    private static readonly Color PrimaryTextColor = new(232, 232, 238);
+    private static readonly Color DimTextColor = new(150, 150, 164);
+    private static readonly Color SelectedBackgroundColor = new(63, 60, 79);
+    private static readonly Color SelectedTextColor = new(246, 246, 249);
+
+    private static readonly Style BaseStyle = new(PrimaryTextColor, BaseBackgroundColor);
+    private static readonly Style PanelStyle = new(PrimaryTextColor, BaseBackgroundColor);
+    private static readonly Style DimStyle = new(DimTextColor, BaseBackgroundColor);
+    private static readonly Style BorderStyle = new(BorderColor, BaseBackgroundColor);
+    private static readonly Style SelectedStyle = new(SelectedTextColor, SelectedBackgroundColor);
+    private static readonly Style HeaderStyle = new(AccentColor, BaseBackgroundColor);
+    private static readonly Style SearchStyle = new(SearchColor, BaseBackgroundColor);
+    private static readonly Style PreviewTextStyle = new(PrimaryTextColor, BaseBackgroundColor);
+    private static readonly Style PreviewLineNumberStyle = new(DimTextColor, BaseBackgroundColor);
+    private static readonly Style ActiveBorderStyle = new(AccentColor, BaseBackgroundColor);
     private static readonly string[] HelpLines =
     [
         "Type to search live",
@@ -25,12 +41,15 @@ internal sealed class FinderTuiRenderer
         "F3 cycle sort",
         "F4 toggle regex",
         "F5 refresh",
+        "F6 open selected item",
+        "F7 reveal selected item in Explorer",
         "Ctrl+L clear query",
         "Ctrl+C toggle case",
         "Ctrl+W toggle whole-word",
         "Ctrl+P toggle path matching",
         "Esc exit"
     ];
+    private static readonly FinderPreviewLine[] HelpPreviewLines = HelpLines.Select(FinderPreviewLine.Plain).ToArray();
 
     private readonly ListWidget<FinderResultListItem> _results = new(new List<FinderResultListItem>())
     {
@@ -40,10 +59,11 @@ internal sealed class FinderTuiRenderer
 
     public int VisibleResultRows { get; private set; } = 10;
     public int VisiblePreviewLines { get; private set; } = 10;
+    public int VisiblePreviewWidth { get; private set; } = 10;
 
     public void Render(RenderContext context, FinderViewState state)
     {
-        context.Render(new ClearWidget(' '));
+        context.Render(new ClearWidget(' ', BaseStyle));
 
         var layout = new Layout("Root")
             .SplitRows(
@@ -66,20 +86,20 @@ internal sealed class FinderTuiRenderer
         return state.ShowHelp ? HelpLines.Length : state.Preview.Lines.Count;
     }
 
+    public static IReadOnlyList<FinderPreviewLine> GetHelpLines() => HelpPreviewLines;
+
     private void RenderTop(RenderContext context, Rectangle area, FinderViewState state)
     {
         var query = string.IsNullOrWhiteSpace(state.Options.QueryText)
             ? "(type to search)"
             : state.Options.QueryText;
-        var metaArea = new Rectangle(
-            area.X,
-            area.Y + 2,
-            area.Width,
-            Math.Max(0, area.Height - 2));
-
         var lines = new Text(
         [
-            TextLine.FromMarkup($"[bold deepskyblue1]>[/] [white]{EscapeMarkup(query)}[/]"),
+            new TextLine(
+            [
+                new TextSpan("> ", SearchStyle),
+                new TextSpan(EscapeMarkup(query), new Style(PrimaryTextColor, BaseBackgroundColor))
+            ]),
             TextLine.FromString(string.Empty),
             TextLine.FromMarkup(
                 $"[grey]{FormatResultType(state.Options.ResultType)}[/] | " +
@@ -95,7 +115,7 @@ internal sealed class FinderTuiRenderer
 
     private void RenderResultsPane(RenderContext context, Rectangle area, FinderViewState state)
     {
-        context.Render(new BoxWidget(BorderStyle) { Border = Border.Rounded }, area);
+        context.Render(new BoxWidget(state.Focus == FinderPaneFocus.Results ? ActiveBorderStyle : BorderStyle) { Border = Border.Rounded }, area);
 
         var inner = area.Inflate(-1, -1);
         if (inner.IsEmpty)
@@ -104,7 +124,7 @@ internal sealed class FinderTuiRenderer
             return;
         }
 
-        context.Render(new ClearWidget(' '), inner);
+        context.Render(new ClearWidget(' ', PanelStyle), inner);
 
         var titleArea = new Rectangle(inner.X, inner.Y, inner.Width, Math.Min(1, inner.Height));
         var contentArea = new Rectangle(
@@ -115,9 +135,14 @@ internal sealed class FinderTuiRenderer
 
         VisibleResultRows = Math.Max(1, contentArea.Height / FinderResultListItem.GetItemHeight(state.Options));
 
-        context.Render(
-            Text.FromMarkup($"[bold]Results[/] [grey]({state.VisibleResults.Count})[/]"),
-            titleArea);
+        context.Render(new Text(
+        [
+            new TextLine(
+            [
+                new TextSpan("Results", HeaderStyle),
+                new TextSpan($" ({state.VisibleResults.Count})", DimStyle)
+            ])
+        ]), titleArea);
 
         if (contentArea.IsEmpty)
         {
@@ -161,33 +186,45 @@ internal sealed class FinderTuiRenderer
 
     private void RenderPreviewPane(RenderContext context, Rectangle area, FinderViewState state)
     {
-        context.Render(new BoxWidget(BorderStyle) { Border = Border.Rounded }, area);
+        context.Render(new BoxWidget(state.Focus == FinderPaneFocus.Preview ? ActiveBorderStyle : BorderStyle) { Border = Border.Rounded }, area);
 
         var inner = area.Inflate(-1, -1);
         if (inner.IsEmpty)
         {
             VisiblePreviewLines = 1;
+            VisiblePreviewWidth = 1;
             return;
         }
 
-        context.Render(new ClearWidget(' '), inner);
+        context.Render(new ClearWidget(' ', PanelStyle), inner);
 
-        var headerArea = new Rectangle(inner.X, inner.Y, inner.Width, Math.Min(2, inner.Height));
+        var detailHeight = state.ShowHelp || state.SelectedResult is null ? 0 : Math.Min(2, Math.Max(0, inner.Height - 4));
+        var headerHeight = Math.Min(2, inner.Height);
+        var headerArea = new Rectangle(inner.X, inner.Y, inner.Width, headerHeight);
         var contentArea = new Rectangle(
             inner.X,
-            inner.Y + Math.Min(2, inner.Height),
+            inner.Y + headerArea.Height,
             inner.Width,
-            Math.Max(0, inner.Height - 2));
+            Math.Max(0, inner.Height - headerArea.Height - detailHeight));
+        var detailArea = new Rectangle(
+            inner.X,
+            contentArea.Y + contentArea.Height,
+            inner.Width,
+            detailHeight);
 
         VisiblePreviewLines = Math.Max(1, contentArea.Height);
+        VisiblePreviewWidth = Math.Max(1, contentArea.Width);
 
         var previewTitle = state.ShowHelp ? "Help" : "Preview";
-        var previewHeader = state.ShowHelp ? "Keybindings" : Truncate(state.Preview.Header, inner.Width);
         context.Render(
             new Text(
             [
-                TextLine.FromMarkup($"[bold]{EscapeMarkup(previewTitle)}[/] [grey]({state.PreviewScrollOffset + 1}-{Math.Min(GetPreviewLineCount(state), state.PreviewScrollOffset + VisiblePreviewLines)} / {GetPreviewLineCount(state)})[/]"),
-                TextLine.FromString(previewHeader, DimStyle)
+                new TextLine(
+                [
+                    new TextSpan(previewTitle, HeaderStyle),
+                    new TextSpan($" ({state.PreviewScrollOffset + 1}-{Math.Min(GetPreviewLineCount(state), state.PreviewScrollOffset + VisiblePreviewLines)} / {GetPreviewLineCount(state)})", DimStyle)
+                ]),
+                TextLine.FromString(state.ShowHelp ? "Keybindings" : string.Empty, DimStyle)
             ]),
             headerArea);
 
@@ -196,10 +233,15 @@ internal sealed class FinderTuiRenderer
             return;
         }
 
-        var lines = state.ShowHelp ? HelpLines : state.Preview.Lines;
+        var lines = state.ShowHelp ? HelpPreviewLines : state.Preview.Lines;
         context.Render(
-            new FinderPreviewWidget(lines, state.PreviewScrollOffset, state.Preview.IsTextPreview && !state.ShowHelp),
+            new FinderPreviewWidget(lines, state.PreviewScrollOffset, state.PreviewHorizontalOffset, state.Preview.IsTextPreview && !state.ShowHelp),
             contentArea);
+
+        if (!detailArea.IsEmpty && state.SelectedResult is not null)
+        {
+            context.Render(BuildPreviewDetails(state.SelectedResult), detailArea);
+        }
     }
 
     private void RenderBottom(RenderContext context, Rectangle area, FinderViewState state)
@@ -210,10 +252,11 @@ internal sealed class FinderTuiRenderer
 
         var lines = new Text(
         [
-            TextLine.FromMarkup("[grey]Tab[/] filter  [grey]F1[/] help  [grey]F2[/] details  [grey]F3[/] sort  [grey]F4[/] regex  [grey]PgUp/PgDn[/] page"),
-            TextLine.FromMarkup($"[grey]Ctrl+Up/Down[/] preview line  [grey]Ctrl+U/D[/] preview page  [grey]Esc[/] exit  [grey]{EscapeMarkup(status)}[/]")
+            TextLine.FromMarkup($"[grey]Tab[/] focus  [grey]F1[/] help  [grey]F2[/] details  [grey]F3[/] sort  [grey]F4[/] regex  [grey]PgUp/PgDn[/] {(state.Focus == FinderPaneFocus.Preview ? "preview" : "page")}"),
+            TextLine.FromMarkup($"[grey]F6[/] open  [grey]F7[/] explorer  [grey]Focus:[/] {(state.Focus == FinderPaneFocus.Results ? "[yellow]results[/]" : "[yellow]preview[/]")}  [grey]Ctrl+F/A/O[/] filter  [grey]Esc[/] exit  [grey]{EscapeMarkup(status)}[/]")
         ]);
 
+        context.Render(new ClearWidget(' ', BaseStyle), area);
         context.Render(lines, area);
     }
 
@@ -308,6 +351,29 @@ internal sealed class FinderTuiRenderer
         return value.Replace("[", "[[").Replace("]", "]]");
     }
 
+    private static Text BuildPreviewDetails(EverythingSearchResult result)
+    {
+        var typeLabel = result.IsFolder ? "Folder" : "File";
+        var sizeLabel = result.IsFolder ? "-" : FormatSize(result.Size);
+        var modifiedLabel = FormatDate(result.DateModified);
+        var extensionLabel = result.Extension ?? "-";
+
+        return new Text(
+        [
+            TextLine.FromString(new string('─', 64), new Style(BorderColor, BaseBackgroundColor)),
+            new TextLine(
+            [
+                new TextSpan(typeLabel, DimStyle),
+                new TextSpan("  ", DimStyle),
+                new TextSpan(sizeLabel, DimStyle),
+                new TextSpan("  ", DimStyle),
+                new TextSpan(extensionLabel, DimStyle),
+                new TextSpan("  ", DimStyle),
+                new TextSpan($"modified {modifiedLabel}", DimStyle)
+            ])
+        ]);
+    }
+
     private sealed class FinderResultListItem(
         EverythingSearchResult result,
         SearchCliOptions options,
@@ -322,7 +388,11 @@ internal sealed class FinderTuiRenderer
             var title = new TextLine(
             [
                 new TextSpan(rowNumber, DimStyle),
-                new TextSpan(Truncate(result.FileName, titleWidth))
+                new TextSpan(
+                    Truncate(result.FileName, titleWidth),
+                    new Style(
+                        isSelected ? SelectedTextColor : PrimaryTextColor,
+                        isSelected ? SelectedBackgroundColor : BaseBackgroundColor))
             ]);
 
             var pathText = string.IsNullOrWhiteSpace(result.Path) ? "." : result.Path;
@@ -351,8 +421,9 @@ internal sealed class FinderTuiRenderer
     }
 
     private sealed class FinderPreviewWidget(
-        IReadOnlyList<string> lines,
+        IReadOnlyList<FinderPreviewLine> lines,
         int offset,
+        int horizontalOffset,
         bool showLineNumbers) : IWidget
     {
         public void Render(RenderContext context)
@@ -365,10 +436,49 @@ internal sealed class FinderTuiRenderer
             for (var index = 0; index < visibleLines.Length; index++)
             {
                 var line = showLineNumbers
-                    ? $"{offset + index + 1,4} {visibleLines[index]}"
-                    : visibleLines[index];
+                    ? $"{offset + index + 1,4} "
+                    : string.Empty;
 
-                context.SetString(0, index, line, maxWidth: context.Viewport.Width);
+                if (showLineNumbers)
+                {
+                    context.SetString(0, index, line, PreviewLineNumberStyle, maxWidth: Math.Min(line.Length, context.Viewport.Width));
+                    RenderLine(context, line.Length, index, visibleLines[index], horizontalOffset);
+                }
+                else
+                {
+                    RenderLine(context, 0, index, visibleLines[index], horizontalOffset);
+                }
+            }
+        }
+
+        private static void RenderLine(RenderContext context, int startX, int y, FinderPreviewLine line, int horizontalOffset)
+        {
+            var x = Math.Min(startX, context.Viewport.Width);
+            var remainingOffset = Math.Max(0, horizontalOffset);
+
+            foreach (var span in line.Spans)
+            {
+                if (x >= context.Viewport.Width || string.IsNullOrEmpty(span.Text))
+                {
+                    break;
+                }
+
+                var text = span.Text;
+                if (remainingOffset >= text.Length)
+                {
+                    remainingOffset -= text.Length;
+                    continue;
+                }
+
+                if (remainingOffset > 0)
+                {
+                    text = text[remainingOffset..];
+                    remainingOffset = 0;
+                }
+
+                var maxWidth = context.Viewport.Width - x;
+                context.SetString(x, y, text, span.Style ?? PreviewTextStyle, maxWidth: maxWidth);
+                x += Math.Min(text.Length, maxWidth);
             }
         }
     }

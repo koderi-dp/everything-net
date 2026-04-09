@@ -13,6 +13,7 @@ internal sealed class FinderPreviewService
         ".js", ".ts", ".jsx", ".tsx", ".html", ".htm", ".css", ".scss",
         ".ps1", ".cmd", ".bat", ".config", ".editorconfig", ".gitignore"
     };
+    private readonly SyntaxHighlightingService _syntaxHighlightingService = new();
 
     public FinderPreviewContent Build(EverythingSearchResult? selected)
     {
@@ -52,10 +53,14 @@ internal sealed class FinderPreviewService
                 return FinderPreviewContent.Empty("Preview", "File is empty.");
             }
 
+            var previewLines = _syntaxHighlightingService.TryHighlight(selected.FullPath, lines, out var highlightedLines)
+                ? highlightedLines
+                : lines.Select(FinderPreviewLine.Plain).ToArray();
+
             return new FinderPreviewContent(
                 Header: selected.FullPath,
                 IsTextPreview: true,
-                Lines: lines);
+                Lines: previewLines);
         }
         catch (IOException)
         {
@@ -74,12 +79,12 @@ internal sealed class FinderPreviewService
             IsTextPreview: false,
             Lines:
             [
-                $"Type       {(selected.IsFolder ? "Folder" : "File")}",
-                $"Name       {selected.FileName}",
-                $"Path       {selected.Path}",
-                $"Extension  {selected.Extension ?? "-"}",
-                $"Size       {(selected.IsFolder ? "-" : FormatSize(selected.Size))}",
-                $"Modified   {FormatDate(selected.DateModified)}"
+                FinderPreviewLine.Plain($"Type       {(selected.IsFolder ? "Folder" : "File")}"),
+                FinderPreviewLine.Plain($"Name       {selected.FileName}"),
+                FinderPreviewLine.Plain($"Path       {selected.Path}"),
+                FinderPreviewLine.Plain($"Extension  {selected.Extension ?? "-"}"),
+                FinderPreviewLine.Plain($"Size       {(selected.IsFolder ? "-" : FormatSize(selected.Size))}"),
+                FinderPreviewLine.Plain($"Modified   {FormatDate(selected.DateModified)}")
             ]);
     }
 

@@ -429,3 +429,10 @@ FodyWeavers.xsd
 
 # Local History for Visual Studio Code
 .idea/
+
+# Session docs
+docs/*
+!docs/session-handoff.md
+
+# Local planning notes
+plans/

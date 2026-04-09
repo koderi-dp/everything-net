@@ -7,8 +7,10 @@ internal sealed record FinderViewState(
     EverythingQueryResponse? Response,
     string? ErrorMessage,
     bool ShowHelp,
+    FinderPaneFocus Focus,
     int SelectedIndex,
     int PreviewScrollOffset,
+    int PreviewHorizontalOffset,
     FinderPreviewContent Preview)
 {
     public IReadOnlyList<EverythingSearchResult> VisibleResults =>

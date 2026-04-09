@@ -1,11 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
     <AssemblyName>Everything.Net</AssemblyName>
     <RootNamespace>Everything.Net</RootNamespace>
+    <PackageId>Voidtools.Everything.Net</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>koderi-dp</Authors>
     <Description>Typed .NET wrapper for the voidtools Everything SDK with DI support and x64/ARM64 native support.</Description>
+    <PackageTags>everything;voidtools;search;windows;sdk</PackageTags>
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <IsPackable>true</IsPackable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -14,8 +21,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="runtimes\win-arm64\native\EverythingARM64.dll" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="runtimes\win-x64\native\Everything64.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="runtimes\win-arm64\native\EverythingARM64.dll" Pack="true" PackagePath="runtimes/win-arm64/native/" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="runtimes\win-x64\native\Everything64.dll" Pack="true" PackagePath="runtimes/win-x64/native/" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" Link="README.md" />
+    <None Include="..\..\LICENSE" Pack="true" PackagePath="\" Link="LICENSE" />
   </ItemGroup>
 
 </Project>
