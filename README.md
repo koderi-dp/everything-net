@@ -4,6 +4,8 @@
 
 Typed .NET wrapper for the voidtools Everything SDK.
 
+![Everything.Net Search TUI demo](./search.gif)
+
 NuGet package: `Voidtools.Everything.Net`
 
 Supported target frameworks:
