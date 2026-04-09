@@ -70,6 +70,51 @@ foreach (var item in response.Results)
 
 If `MaxResults` is left at `0`, the client uses `EverythingClientOptions.DefaultMaxResults`.
 
+## Paging
+
+Use `Offset` and `MaxResults` to fetch a window of results instead of materializing a large result set at once:
+
+```csharp
+var pageSize = 100;
+var page = 2;
+
+var response = await client.SearchAsync(new EverythingQuery
+{
+    SearchText = "report",
+    Offset = (uint)(page * pageSize),
+    MaxResults = (uint)pageSize,
+    Sort = EverythingSort.NameAscending,
+    RequestFlags =
+        EverythingRequestFlags.FileName |
+        EverythingRequestFlags.Path
+});
+
+Console.WriteLine($"Total matches: {response.TotalResults}");
+Console.WriteLine($"Returned this page: {response.Results.Count}");
+
+foreach (var item in response.Results)
+{
+    Console.WriteLine(item.FullPath);
+}
+```
+
+## Query Features
+
+`SearchText` is passed directly to Everything, so Everything search syntax, filters, and macros can be used as-is.
+
+The query model also exposes common matching options such as regex, case sensitivity, whole-word matching, and path matching:
+
+```csharp
+var response = await client.SearchAsync(new EverythingQuery
+{
+    SearchText = @"^report-\d{4}\.pdf$",
+    Regex = true,
+    MatchCase = false,
+    MatchWholeWord = false,
+    MatchPath = false
+});
+```
+
 ## Native DLL packaging
 
 The NuGet package includes the native Everything SDK DLLs as runtime assets:
