@@ -53,7 +53,6 @@ var client = provider.GetRequiredService<IEverythingClient>();
 var response = await client.SearchAsync(new EverythingQuery
 {
     SearchText = "invoice dm:today",
-    MaxResults = 50,
     WaitForResults = true,
     Sort = EverythingSort.DateModifiedDescending,
     RequestFlags =
@@ -68,6 +67,8 @@ foreach (var item in response.Results)
     Console.WriteLine($"{item.FullPath} ({item.Size})");
 }
 ```
+
+If `MaxResults` is left at `0`, the client uses `EverythingClientOptions.DefaultMaxResults`.
 
 ## Native DLL packaging
 

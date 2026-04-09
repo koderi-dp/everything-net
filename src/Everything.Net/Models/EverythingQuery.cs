@@ -18,9 +18,9 @@ public sealed class EverythingQuery
     public uint Offset { get; init; } = 0;
 
     /// <summary>
-    /// Gets the maximum number of results to request.
+    /// Gets the maximum number of results to request. A value of <c>0</c> uses the client default.
     /// </summary>
-    public uint MaxResults { get; init; } = 100;
+    public uint MaxResults { get; init; } = 0;
 
     /// <summary>
     /// Gets the optional sort mode to apply.
