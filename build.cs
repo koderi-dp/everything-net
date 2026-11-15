@@ -1,4 +1,4 @@
-#:sdk Cake.Sdk@6.0.0
+#:sdk Cake.Sdk@7.0.0
 // Run with: dotnet run .\build.cs -- --target Pack --configuration Release
 // Optional env vars:
 //   PACKAGE_VERSION=0.1.1
