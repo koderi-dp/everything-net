@@ -13,6 +13,10 @@ namespace Everything.Net.Services;
 /// </summary>
 public sealed class EverythingClient : IEverythingClient
 {
+    // The native SDK keeps one search state and one result list per process, so every
+    // client instance has to take turns: configure, query, read and reset as one unit.
+    private static readonly Lock NativeGate = new();
+
     private readonly EverythingClientOptions _options;
     private readonly IEverythingNativeAdapter _native;
 
@@ -32,7 +36,10 @@ public sealed class EverythingClient : IEverythingClient
     {
         try
         {
-            return _native.IsDbLoaded();
+            lock (NativeGate)
+            {
+                return _native.IsDbLoaded();
+            }
         }
         catch (DllNotFoundException)
         {
@@ -55,35 +62,10 @@ public sealed class EverythingClient : IEverythingClient
 
         try
         {
-            Configure(query);
-
-            var success = _native.Query(query.WaitForResults);
-            var errorCode = _native.GetLastError();
-
-            if (!success)
+            lock (NativeGate)
             {
-                return HandleFailure(query.SearchText, errorCode);
+                return SearchCore(query);
             }
-
-            var visibleCount = _native.GetNumResults();
-            var totalMatches = _native.GetTotResults();
-            // Tot can be 0 in edge cases before max is applied; fall back to visible count.
-            if (totalMatches == 0 && visibleCount > 0)
-            {
-                totalMatches = visibleCount;
-            }
-
-            var results = ReadResults(visibleCount, query.RequestFlags);
-
-            return new EverythingQueryResponse
-            {
-                SearchText = query.SearchText,
-                Success = true,
-                TotalResults = totalMatches,
-                Results = results,
-                ErrorCode = EverythingErrorCode.Ok,
-                ErrorMessage = null
-            };
         }
         catch (DllNotFoundException ex)
         {
@@ -111,7 +93,49 @@ public sealed class EverythingClient : IEverythingClient
         }, cancellationToken);
     }
 
-    private void Configure(EverythingQuery query)
+    private EverythingQueryResponse SearchCore(EverythingQuery query)
+    {
+        var requestFlags = Configure(query);
+
+        try
+        {
+            var success = _native.Query(query.WaitForResults);
+            var errorCode = _native.GetLastError();
+
+            if (!success)
+            {
+                return HandleFailure(query.SearchText, errorCode);
+            }
+
+            var visibleCount = _native.GetNumResults();
+            var totalMatches = _native.GetTotResults();
+            // Tot can be 0 in edge cases before max is applied; fall back to visible count.
+            if (totalMatches == 0 && visibleCount > 0)
+            {
+                totalMatches = visibleCount;
+            }
+
+            var results = ReadResults(visibleCount, requestFlags);
+
+            return new EverythingQueryResponse
+            {
+                SearchText = query.SearchText,
+                Success = true,
+                TotalResults = totalMatches,
+                Results = results,
+                ErrorCode = EverythingErrorCode.Ok,
+                ErrorMessage = null
+            };
+        }
+        finally
+        {
+            // Everything has been copied out; let the SDK free its copy of the results
+            // instead of holding it until the next query.
+            _native.Reset();
+        }
+    }
+
+    private EverythingRequestFlags Configure(EverythingQuery query)
     {
         var requestFlags = query.RequestFlags;
 
@@ -129,51 +153,46 @@ public sealed class EverythingClient : IEverythingClient
         _native.SetMatchWholeWord(query.MatchWholeWord);
         _native.SetRegex(query.Regex);
 
-        if (query.Sort.HasValue)
-        {
-            _native.SetSort((uint)query.Sort.Value);
-        }
+        // Always set the sort: the SDK remembers the last one, so leaving it alone would
+        // make a query without a sort inherit the sort of the previous query.
+        _native.SetSort((uint)(query.Sort ?? EverythingSort.NameAscending));
+
+        return requestFlags;
     }
 
     private IReadOnlyList<EverythingSearchResult> ReadResults(uint total, EverythingRequestFlags requestFlags)
     {
         var list = new List<EverythingSearchResult>((int)total);
+        var paths = new StringPool();
+        var extensions = new StringPool();
+
+        // With both parts requested the full path is just "path\name", so the result builds it
+        // on first use. Otherwise only the SDK can supply it.
+        const EverythingRequestFlags NameAndPath = EverythingRequestFlags.FileName | EverythingRequestFlags.Path;
+        var buildFullPathOnDemand = (requestFlags & NameAndPath) == NameAndPath;
 
         for (uint i = 0; i < total; i++)
         {
             var fileName = _native.GetResultFileName(i);
-            var path = _native.GetResultPath(i);
-            var fullPath = _native.GetResultFullPath(i);
+            var path = _native.GetResultPath(i, paths);
+            var fullPath = buildFullPathOnDemand ? null : NullIfEmpty(_native.GetResultFullPath(i));
 
-            if (string.IsNullOrWhiteSpace(fullPath))
+            list.Add(new EverythingSearchResult(i, fileName, path, fullPath)
             {
-                fullPath = string.IsNullOrWhiteSpace(path)
-                    ? fileName
-                    : Path.Combine(path, fileName);
-            }
-
-            var isFolder = _native.IsFolderResult(i);
-
-            list.Add(new EverythingSearchResult
-            {
-                Index = i,
-                FileName = fileName,
-                Path = path,
-                FullPath = fullPath,
-                Extension = requestFlags.HasFlag(EverythingRequestFlags.Extension) ? NullIfEmpty(_native.GetResultExtension(i)) : null,
+                Extension = requestFlags.HasFlag(EverythingRequestFlags.Extension) ? NullIfEmpty(_native.GetResultExtension(i, extensions)) : null,
                 Size = requestFlags.HasFlag(EverythingRequestFlags.Size) && _native.TryGetResultSize(i, out var size) ? size : null,
-                DateCreated = requestFlags.HasFlag(EverythingRequestFlags.DateCreated) && _native.TryGetResultDateCreated(i, out var dc) ? FileTimeConverter.FromNative(dc) : null,
-                DateModified = requestFlags.HasFlag(EverythingRequestFlags.DateModified) && _native.TryGetResultDateModified(i, out var dm) ? FileTimeConverter.FromNative(dm) : null,
-                DateAccessed = requestFlags.HasFlag(EverythingRequestFlags.DateAccessed) && _native.TryGetResultDateAccessed(i, out var da) ? FileTimeConverter.FromNative(da) : null,
+                DateCreatedFileTime = requestFlags.HasFlag(EverythingRequestFlags.DateCreated) && _native.TryGetResultDateCreated(i, out var dc) ? dc : 0,
+                DateModifiedFileTime = requestFlags.HasFlag(EverythingRequestFlags.DateModified) && _native.TryGetResultDateModified(i, out var dm) ? dm : 0,
+                DateAccessedFileTime = requestFlags.HasFlag(EverythingRequestFlags.DateAccessed) && _native.TryGetResultDateAccessed(i, out var da) ? da : 0,
                 Attributes = requestFlags.HasFlag(EverythingRequestFlags.Attributes) ? _native.GetResultAttributes(i) : null,
                 FileListFileName = requestFlags.HasFlag(EverythingRequestFlags.FileListFileName) ? NullIfEmpty(_native.GetResultFileListFileName(i)) : null,
                 RunCount = requestFlags.HasFlag(EverythingRequestFlags.RunCount) ? _native.GetResultRunCount(i) : null,
-                DateRun = requestFlags.HasFlag(EverythingRequestFlags.DateRun) && _native.TryGetResultDateRun(i, out var dr) ? FileTimeConverter.FromNative(dr) : null,
-                DateRecentlyChanged = requestFlags.HasFlag(EverythingRequestFlags.DateRecentlyChanged) && _native.TryGetResultDateRecentlyChanged(i, out var rc) ? FileTimeConverter.FromNative(rc) : null,
+                DateRunFileTime = requestFlags.HasFlag(EverythingRequestFlags.DateRun) && _native.TryGetResultDateRun(i, out var dr) ? dr : 0,
+                DateRecentlyChangedFileTime = requestFlags.HasFlag(EverythingRequestFlags.DateRecentlyChanged) && _native.TryGetResultDateRecentlyChanged(i, out var rc) ? rc : 0,
                 HighlightedFileName = requestFlags.HasFlag(EverythingRequestFlags.HighlightedFileName) ? NullIfEmpty(_native.GetResultHighlightedFileName(i)) : null,
                 HighlightedPath = requestFlags.HasFlag(EverythingRequestFlags.HighlightedPath) ? NullIfEmpty(_native.GetResultHighlightedPath(i)) : null,
                 HighlightedFullPath = requestFlags.HasFlag(EverythingRequestFlags.HighlightedFullPathAndFileName) ? NullIfEmpty(_native.GetResultHighlightedFullPath(i)) : null,
-                IsFolder = isFolder
+                IsFolder = _native.IsFolderResult(i)
             });
         }
 

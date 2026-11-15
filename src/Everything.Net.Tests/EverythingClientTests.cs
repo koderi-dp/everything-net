@@ -191,6 +191,148 @@ public sealed class EverythingClientTests
         Assert.Equal(EverythingRequestFlags.FileName | EverythingRequestFlags.Path, native.RequestFlags);
     }
 
+    [Fact]
+    public void Search_UsesDefaultSort_WhenQueryHasNoSort_AfterASortedQuery()
+    {
+        var native = new FakeEverythingNativeAdapter { QueryResult = true };
+        var client = CreateClient(native);
+
+        client.Search(new EverythingQuery { SearchText = "a", Sort = EverythingSort.SizeDescending });
+        client.Search(EverythingQuery.Default("b"));
+
+        Assert.Equal((uint)EverythingSort.NameAscending, native.Sort);
+    }
+
+    [Fact]
+    public void Search_ResetsNativeState_AfterReadingResults()
+    {
+        var native = new FakeEverythingNativeAdapter
+        {
+            QueryResult = true,
+            NumResults = 1,
+            ResultFileNames = { [0] = "file.txt" },
+            ResultPaths = { [0] = @"C:\data" }
+        };
+        var client = CreateClient(native);
+
+        var response = client.Search(EverythingQuery.Default("file"));
+
+        Assert.Single(response.Results);
+        Assert.Equal(1, native.ResetCount);
+        Assert.Equal(0, native.ResultReadsAfterReset);
+    }
+
+    [Fact]
+    public void Search_ResetsNativeState_WhenQueryFails()
+    {
+        var native = new FakeEverythingNativeAdapter
+        {
+            QueryResult = false,
+            LastError = EverythingErrorCode.Ipc
+        };
+        var client = CreateClient(native, new EverythingClientOptions { ThrowOnUnavailableClient = false });
+
+        client.Search(EverythingQuery.Default("file"));
+
+        Assert.Equal(1, native.ResetCount);
+    }
+
+    [Fact]
+    public async Task Search_RunsOneAtATime_WhenCalledConcurrently_AcrossClients()
+    {
+        var native = new FakeEverythingNativeAdapter
+        {
+            QueryResult = true,
+            QueryDelay = TimeSpan.FromMilliseconds(20)
+        };
+        var clients = new[] { CreateClient(native), CreateClient(native) };
+
+        await Task.WhenAll(Enumerable.Range(0, 8).Select(i =>
+            clients[i % 2].SearchAsync(EverythingQuery.Default("file"))));
+
+        Assert.Equal(8, native.ResetCount);
+        Assert.Equal(1, native.MaxConcurrentSearches);
+    }
+
+    [Theory]
+    [InlineData(@"C:\data", "file.txt", @"C:\data\file.txt")]
+    [InlineData("C:", "file.txt", @"C:\file.txt")]
+    [InlineData("", "C:", "C:")]
+    [InlineData(@"\server\share", "file.txt", @"\server\share\file.txt")]
+    [InlineData(@"\server", "share", @"\server\share")]
+    public void Search_BuildsFullPathFromPathAndFileName(string path, string fileName, string expected)
+    {
+        var native = new FakeEverythingNativeAdapter
+        {
+            QueryResult = true,
+            NumResults = 1,
+            ResultFileNames = { [0] = fileName },
+            ResultPaths = { [0] = path },
+            ResultFullPaths = { [0] = "not used when name and path are requested" }
+        };
+        var client = CreateClient(native);
+
+        var result = Assert.Single(client.Search(EverythingQuery.Default("file")).Results);
+
+        Assert.Equal(expected, result.FullPath);
+        Assert.Same(result.FullPath, result.FullPath);
+    }
+
+    [Fact]
+    public void Search_UsesNativeFullPath_WhenPathAndFileNameAreNotRequested()
+    {
+        var native = new FakeEverythingNativeAdapter
+        {
+            QueryResult = true,
+            NumResults = 1,
+            ResultFullPaths = { [0] = @"C:\data\file.txt" }
+        };
+        var client = CreateClient(native, new EverythingClientOptions { RequestPathAndFileNameByDefault = false });
+
+        var response = client.Search(new EverythingQuery
+        {
+            SearchText = "file",
+            RequestFlags = EverythingRequestFlags.FullPathAndFileName
+        });
+
+        Assert.Equal(@"C:\data\file.txt", Assert.Single(response.Results).FullPath);
+    }
+
+    [Fact]
+    public void SearchResult_KeepsValues_WhenBuiltByHand()
+    {
+        var created = new DateTimeOffset(2024, 5, 6, 7, 8, 9, TimeSpan.FromHours(2));
+
+        var result = new EverythingSearchResult
+        {
+            Index = 0,
+            FileName = "file.txt",
+            Path = @"C:\data",
+            FullPath = @"D:\elsewhere\file.txt",
+            DateCreated = created,
+            DateModified = DateTimeOffset.MinValue
+        };
+
+        Assert.Equal(@"D:\elsewhere\file.txt", result.FullPath);
+        Assert.Equal(created, result.DateCreated);
+        Assert.Null(result.DateModified);
+        Assert.Null(result.DateAccessed);
+    }
+
+    [Fact]
+    public void StringPool_ReturnsTheSameInstance_ForEqualValues()
+    {
+        var pool = new StringPool();
+
+        var first = pool.GetOrAdd(@"C:\data");
+        var other = pool.GetOrAdd(@"C:\other");
+        var again = pool.GetOrAdd(new string(@"C:\data"));
+
+        Assert.Same(first, again);
+        Assert.NotSame(first, other);
+        Assert.Same(string.Empty, pool.GetOrAdd(""));
+    }
+
     private static EverythingClient CreateClient(
         IEverythingNativeAdapter native,
         EverythingClientOptions? options = null)
@@ -218,6 +360,12 @@ public sealed class EverythingClientTests
         public bool MatchCase { get; private set; }
         public bool MatchWholeWord { get; private set; }
         public bool Regex { get; private set; }
+        public TimeSpan QueryDelay { get; set; }
+        public int ResetCount { get; private set; }
+        public int ResultReadsAfterReset { get; private set; }
+        public int MaxConcurrentSearches { get; private set; }
+
+        private int _activeSearches;
 
         public Dictionary<uint, string> ResultFullPaths { get; } = [];
         public Dictionary<uint, string> ResultFileNames { get; } = [];
@@ -255,6 +403,15 @@ public sealed class EverythingClientTests
             }
 
             SearchText = value;
+
+            var active = Interlocked.Increment(ref _activeSearches);
+            MaxConcurrentSearches = Math.Max(MaxConcurrentSearches, active);
+        }
+
+        public void Reset()
+        {
+            ResetCount++;
+            Interlocked.Decrement(ref _activeSearches);
         }
 
         public void SetRequestFlags(EverythingRequestFlags flags) => RequestFlags = flags;
@@ -265,14 +422,30 @@ public sealed class EverythingClientTests
         public void SetMatchCase(bool enable) => MatchCase = enable;
         public void SetMatchWholeWord(bool enable) => MatchWholeWord = enable;
         public void SetRegex(bool enable) => Regex = enable;
-        public bool Query(bool wait) => QueryResult;
+        public bool Query(bool wait)
+        {
+            if (QueryDelay > TimeSpan.Zero)
+            {
+                Thread.Sleep(QueryDelay);
+            }
+
+            return QueryResult;
+        }
         public uint GetNumResults() => NumResults;
         public uint GetTotResults() => TotResults;
         public EverythingErrorCode GetLastError() => LastError;
         public string GetResultFullPath(uint index) => ResultFullPaths.GetValueOrDefault(index, string.Empty);
-        public string GetResultFileName(uint index) => ResultFileNames.GetValueOrDefault(index, string.Empty);
-        public string GetResultPath(uint index) => ResultPaths.GetValueOrDefault(index, string.Empty);
-        public string GetResultExtension(uint index) => ResultExtensions.GetValueOrDefault(index, string.Empty);
+        public string GetResultFileName(uint index)
+        {
+            if (ResetCount > 0)
+            {
+                ResultReadsAfterReset++;
+            }
+
+            return ResultFileNames.GetValueOrDefault(index, string.Empty);
+        }
+        public string GetResultPath(uint index, StringPool pool) => ResultPaths.GetValueOrDefault(index, string.Empty);
+        public string GetResultExtension(uint index, StringPool pool) => ResultExtensions.GetValueOrDefault(index, string.Empty);
         public bool TryGetResultSize(uint index, out long size) => ResultSizes.TryGetValue(index, out size);
         public bool TryGetResultDateCreated(uint index, out long fileTime) => ResultDateCreated.TryGetValue(index, out fileTime);
         public bool TryGetResultDateModified(uint index, out long fileTime) => ResultDateModified.TryGetValue(index, out fileTime);

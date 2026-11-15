@@ -16,13 +16,14 @@ internal interface IEverythingNativeAdapter
     void SetMatchWholeWord(bool enable);
     void SetRegex(bool enable);
     bool Query(bool wait);
+    void Reset();
     uint GetNumResults();
     uint GetTotResults();
     EverythingErrorCode GetLastError();
     string GetResultFullPath(uint index);
     string GetResultFileName(uint index);
-    string GetResultPath(uint index);
-    string GetResultExtension(uint index);
+    string GetResultPath(uint index, StringPool pool);
+    string GetResultExtension(uint index, StringPool pool);
     bool TryGetResultSize(uint index, out long size);
     bool TryGetResultDateCreated(uint index, out long fileTime);
     bool TryGetResultDateModified(uint index, out long fileTime);

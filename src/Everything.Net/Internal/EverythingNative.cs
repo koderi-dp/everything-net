@@ -221,6 +221,12 @@ internal static class EverythingNative
     [DllImport(DllArm64, EntryPoint = "Everything_GetResultHighlightedFullPathAndFileNameW", CharSet = CharSet.Unicode)]
     private static extern IntPtr EverythingArm64_GetResultHighlightedFullPath(uint index);
 
+    [DllImport(DllX64, EntryPoint = "Everything_Reset")]
+    private static extern void Everything64_Reset();
+
+    [DllImport(DllArm64, EntryPoint = "Everything_Reset")]
+    private static extern void EverythingArm64_Reset();
+
     [DllImport(DllX64, EntryPoint = "Everything_IsFolderResult")]
     private static extern bool Everything64_IsFolderResult(uint index);
 
@@ -364,6 +370,22 @@ internal static class EverythingNative
         }
     }
 
+    /// <summary>Frees the result list held by the SDK and returns the search state to its defaults.</summary>
+    public static void Reset()
+    {
+        switch (EverythingArchitectureHelper.GetCurrentArchitecture())
+        {
+            case EverythingArchitecture.X64:
+                Everything64_Reset();
+                break;
+            case EverythingArchitecture.Arm64:
+                EverythingArm64_Reset();
+                break;
+            default:
+                throw new PlatformNotSupportedException();
+        }
+    }
+
     public static bool Query(bool wait)
     {
         return EverythingArchitectureHelper.GetCurrentArchitecture() switch
@@ -452,21 +474,23 @@ internal static class EverythingNative
             _ => throw new PlatformNotSupportedException()
         });
 
-    public static string GetResultPath(uint index) => PtrToString(
+    public static string GetResultPath(uint index, StringPool pool) => PtrToString(
         EverythingArchitectureHelper.GetCurrentArchitecture() switch
         {
             EverythingArchitecture.X64 => Everything64_GetResultPath(index),
             EverythingArchitecture.Arm64 => EverythingArm64_GetResultPath(index),
             _ => throw new PlatformNotSupportedException()
-        });
+        },
+        pool);
 
-    public static string GetResultExtension(uint index) => PtrToString(
+    public static string GetResultExtension(uint index, StringPool pool) => PtrToString(
         EverythingArchitectureHelper.GetCurrentArchitecture() switch
         {
             EverythingArchitecture.X64 => Everything64_GetResultExtension(index),
             EverythingArchitecture.Arm64 => EverythingArm64_GetResultExtension(index),
             _ => throw new PlatformNotSupportedException()
-        });
+        },
+        pool);
 
     public static bool TryGetResultSize(uint index, out long size)
     {
@@ -593,5 +617,13 @@ internal static class EverythingNative
     private static string PtrToString(IntPtr ptr)
     {
         return ptr == IntPtr.Zero ? string.Empty : Marshal.PtrToStringUni(ptr) ?? string.Empty;
+    }
+
+    /// <summary>Reads a native string, reusing an existing managed copy from the pool when there is one.</summary>
+    private static unsafe string PtrToString(IntPtr ptr, StringPool pool)
+    {
+        return ptr == IntPtr.Zero
+            ? string.Empty
+            : pool.GetOrAdd(MemoryMarshal.CreateReadOnlySpanFromNullTerminated((char*)ptr));
     }
 }

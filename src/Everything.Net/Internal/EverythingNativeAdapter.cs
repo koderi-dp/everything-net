@@ -17,13 +17,14 @@ internal sealed class EverythingNativeAdapter : IEverythingNativeAdapter
     public void SetMatchWholeWord(bool enable) => EverythingNative.SetMatchWholeWord(enable);
     public void SetRegex(bool enable) => EverythingNative.SetRegex(enable);
     public bool Query(bool wait) => EverythingNative.Query(wait);
+    public void Reset() => EverythingNative.Reset();
     public uint GetNumResults() => EverythingNative.GetNumResults();
     public uint GetTotResults() => EverythingNative.GetTotResults();
     public EverythingErrorCode GetLastError() => EverythingNative.GetLastError();
     public string GetResultFullPath(uint index) => EverythingNative.GetResultFullPath(index);
     public string GetResultFileName(uint index) => EverythingNative.GetResultFileName(index);
-    public string GetResultPath(uint index) => EverythingNative.GetResultPath(index);
-    public string GetResultExtension(uint index) => EverythingNative.GetResultExtension(index);
+    public string GetResultPath(uint index, StringPool pool) => EverythingNative.GetResultPath(index, pool);
+    public string GetResultExtension(uint index, StringPool pool) => EverythingNative.GetResultExtension(index, pool);
     public bool TryGetResultSize(uint index, out long size) => EverythingNative.TryGetResultSize(index, out size);
     public bool TryGetResultDateCreated(uint index, out long fileTime) => EverythingNative.TryGetResultDateCreated(index, out fileTime);
     public bool TryGetResultDateModified(uint index, out long fileTime) => EverythingNative.TryGetResultDateModified(index, out fileTime);
