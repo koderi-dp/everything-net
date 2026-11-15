@@ -10,8 +10,8 @@ NuGet package: `Voidtools.Everything.Net`
 
 Supported target frameworks:
 
-- `net8.0`
 - `net10.0`
+- `net11.0`
 
 ## Supported architectures
 
