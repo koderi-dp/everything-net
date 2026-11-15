@@ -126,10 +126,10 @@ internal static class EverythingNative
     private static extern bool EverythingArm64_IsDbLoaded();
 
     [DllImport(DllX64, EntryPoint = "Everything_GetResultFullPathNameW", CharSet = CharSet.Unicode)]
-    private static extern uint Everything64_GetResultFullPathName(uint index, StringBuilder buffer, uint size);
+    private static extern uint Everything64_GetResultFullPathName(uint index, [Out] char[]? buffer, uint size);
 
     [DllImport(DllArm64, EntryPoint = "Everything_GetResultFullPathNameW", CharSet = CharSet.Unicode)]
-    private static extern uint EverythingArm64_GetResultFullPathName(uint index, StringBuilder buffer, uint size);
+    private static extern uint EverythingArm64_GetResultFullPathName(uint index, [Out] char[]? buffer, uint size);
 
     [DllImport(DllX64, EntryPoint = "Everything_GetResultFileNameW", CharSet = CharSet.Unicode)]
     private static extern IntPtr Everything64_GetResultFileName(uint index);
@@ -417,20 +417,31 @@ internal static class EverythingNative
 
     public static string GetResultFullPath(uint index)
     {
-        const int initialCapacity = 32768;
-        var sb = new StringBuilder(initialCapacity);
-
-        var copied = EverythingArchitectureHelper.GetCurrentArchitecture() switch
-        {
-            EverythingArchitecture.X64 => Everything64_GetResultFullPathName(index, sb, (uint)sb.Capacity),
-            EverythingArchitecture.Arm64 => EverythingArm64_GetResultFullPathName(index, sb, (uint)sb.Capacity),
-            _ => throw new PlatformNotSupportedException()
-        };
-
-        if (copied == 0)
+        // Ask for the length first, then read into a pooled buffer of that size.
+        var length = FullPathName(index, null, 0);
+        if (length == 0)
             return string.Empty;
 
-        return sb.ToString();
+        var buffer = System.Buffers.ArrayPool<char>.Shared.Rent((int)length + 1);
+        try
+        {
+            var copied = FullPathName(index, buffer, (uint)buffer.Length);
+            return copied == 0 ? string.Empty : new string(buffer, 0, (int)Math.Min(copied, (uint)buffer.Length));
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<char>.Shared.Return(buffer);
+        }
+    }
+
+    private static uint FullPathName(uint index, char[]? buffer, uint size)
+    {
+        return EverythingArchitectureHelper.GetCurrentArchitecture() switch
+        {
+            EverythingArchitecture.X64 => Everything64_GetResultFullPathName(index, buffer, size),
+            EverythingArchitecture.Arm64 => EverythingArm64_GetResultFullPathName(index, buffer, size),
+            _ => throw new PlatformNotSupportedException()
+        };
     }
 
     public static string GetResultFileName(uint index) => PtrToString(
