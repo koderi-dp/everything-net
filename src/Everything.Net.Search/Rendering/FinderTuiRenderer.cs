@@ -377,11 +377,11 @@ internal sealed class FinderTuiRenderer
     private sealed class FinderResultListItem(
         EverythingSearchResult result,
         SearchCliOptions options,
-        int index) : ListWidgetItem
+        int index) : IListWidgetItem
     {
         public static int GetItemHeight(SearchCliOptions options) => options.ShowDetails ? 3 : 2;
 
-        protected override Text CreateText(bool isSelected)
+        public Text CreateText(bool isSelected)
         {
             var rowNumber = $"{options.Offset + (uint)index + 1,4} ";
             var titleWidth = Math.Max(12, options.ShowDetails ? 58 : 70);
