@@ -16,6 +16,7 @@
     <Project Path="Everything.Net/Everything.Net.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="Everything.Net.Benchmarks/Everything.Net.Benchmarks.csproj" />
     <Project Path="Everything.Net.Tests/Everything.Net.Tests.csproj" />
   </Folder>
 </Solution>
