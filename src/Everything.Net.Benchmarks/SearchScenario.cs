@@ -33,8 +33,13 @@ public static class SearchScenario
     public static string SearchText { get; } =
         Environment.GetEnvironmentVariable("EVERYTHING_BENCH_QUERY") is { Length: > 0 } text ? text : "*.dll";
 
+    public static EverythingSdkVersion Sdk { get; } =
+        Enum.TryParse<EverythingSdkVersion>(Environment.GetEnvironmentVariable("EVERYTHING_BENCH_SDK"), ignoreCase: true, out var sdk)
+            ? sdk
+            : EverythingSdkVersion.Auto;
+
     public static EverythingClient CreateClient() =>
-        new(Options.Create(new EverythingClientOptions()));
+        new(Options.Create(new EverythingClientOptions { SdkVersion = Sdk }));
 
     public static EverythingQuery CreateQuery(uint maxResults, FieldSet fields, ResultOrder order) => new()
     {

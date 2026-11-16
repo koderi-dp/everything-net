@@ -21,9 +21,22 @@ public sealed class EverythingClient : IEverythingClient
     private readonly IEverythingNativeAdapter _native;
 
     public EverythingClient(IOptions<EverythingClientOptions> options)
-        : this(options, new EverythingNativeAdapter())
+        : this(options, CreateNativeAdapter(options.Value))
     {
+        EverythingNativeLibraryLocator.Configure(_options.NativeLibraryPath, _options.PreferInstalledNativeLibrary);
     }
+
+    /// <summary>
+    /// Gets the Everything SDK version the most recent call used. With
+    /// <see cref="EverythingSdkVersion.Auto"/> this is decided on each call, so check it after one.
+    /// </summary>
+    public EverythingSdkVersion SdkVersion => _native.SdkVersion;
+
+    /// <summary>
+    /// Gets the full path of the SDK DLL in use, or <see langword="null"/> if no call has been
+    /// made yet or the DLL could not be found.
+    /// </summary>
+    public string? NativeLibraryPath => _native.LoadedLibraryPath;
 
     internal EverythingClient(IOptions<EverythingClientOptions> options, IEverythingNativeAdapter native)
     {
@@ -92,6 +105,13 @@ public sealed class EverythingClient : IEverythingClient
             return Search(query);
         }, cancellationToken);
     }
+
+    private static IEverythingNativeAdapter CreateNativeAdapter(EverythingClientOptions options) => options.SdkVersion switch
+    {
+        EverythingSdkVersion.V2 => new EverythingNativeAdapter(),
+        EverythingSdkVersion.V3 => new Everything3NativeAdapter(options.InstanceName),
+        _ => new AutoNativeAdapter(options.InstanceName)
+    };
 
     private EverythingQueryResponse SearchCore(EverythingQuery query)
     {

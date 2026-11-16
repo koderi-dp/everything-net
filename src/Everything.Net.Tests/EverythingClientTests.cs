@@ -342,9 +342,11 @@ public sealed class EverythingClientTests
             native);
     }
 
-    private sealed class FakeEverythingNativeAdapter : IEverythingNativeAdapter
+    internal sealed class FakeEverythingNativeAdapter : IEverythingNativeAdapter
     {
         public string ExpectedDllName { get; set; } = "Everything64.dll";
+        public EverythingSdkVersion SdkVersion { get; set; } = EverythingSdkVersion.V2;
+        public string? LoadedLibraryPath { get; set; }
         public Exception? IsDbLoadedException { get; set; }
         public Exception? SetSearchException { get; set; }
         public bool QueryResult { get; set; }

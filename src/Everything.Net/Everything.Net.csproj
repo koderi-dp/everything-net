@@ -24,6 +24,8 @@
   <ItemGroup>
     <None Include="runtimes\win-arm64\native\EverythingARM64.dll" Pack="true" PackagePath="runtimes/win-arm64/native/" CopyToOutputDirectory="PreserveNewest" />
     <None Include="runtimes\win-x64\native\Everything64.dll" Pack="true" PackagePath="runtimes/win-x64/native/" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="runtimes\win-arm64\native\Everything3_ARM64.dll" Pack="true" PackagePath="runtimes/win-arm64/native/" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="runtimes\win-x64\native\Everything3_x64.dll" Pack="true" PackagePath="runtimes/win-x64/native/" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

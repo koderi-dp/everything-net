@@ -1,5 +1,3 @@
-using System.IO;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using Everything.Net.Enums;
@@ -8,37 +6,13 @@ namespace Everything.Net.Internal;
 
 internal static class EverythingNative
 {
-    private const string DllX64 = "Everything64.dll";
-    private const string DllArm64 = "EverythingARM64.dll";
+    private const string DllX64 = NativeLibraryResolver.Sdk2X64;
+    private const string DllArm64 = NativeLibraryResolver.Sdk2Arm64;
 
     static EverythingNative()
     {
-        NativeLibrary.SetDllImportResolver(typeof(EverythingNative).Assembly, ResolveDll);
+        NativeLibraryResolver.EnsureRegistered();
         _ = EverythingArchitectureHelper.GetCurrentArchitecture();
-    }
-
-    private static IntPtr ResolveDll(string libraryName, Assembly? assembly, DllImportSearchPath? searchPath)
-    {
-        if (!string.Equals(libraryName, DllX64, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(libraryName, DllArm64, StringComparison.OrdinalIgnoreCase))
-        {
-            return IntPtr.Zero;
-        }
-
-        var baseDir = AppContext.BaseDirectory;
-        var arch = EverythingArchitectureHelper.GetCurrentArchitecture();
-        var rid = arch == EverythingArchitecture.Arm64 ? "win-arm64" : "win-x64";
-        var fileName = arch == EverythingArchitecture.Arm64 ? DllArm64 : DllX64;
-
-        var runtimesPath = Path.Combine(baseDir, "runtimes", rid, "native", fileName);
-        if (File.Exists(runtimesPath))
-            return NativeLibrary.Load(runtimesPath);
-
-        var flatPath = Path.Combine(baseDir, fileName);
-        if (File.Exists(flatPath))
-            return NativeLibrary.Load(flatPath);
-
-        return IntPtr.Zero;
     }
 
     [DllImport(DllX64, EntryPoint = "Everything_SetSearchW", CharSet = CharSet.Unicode)]

@@ -5,6 +5,8 @@ namespace Everything.Net.Internal;
 internal interface IEverythingNativeAdapter
 {
     string ExpectedDllName { get; }
+    EverythingSdkVersion SdkVersion { get; }
+    string? LoadedLibraryPath { get; }
     bool IsDbLoaded();
     void SetSearch(string value);
     void SetRequestFlags(EverythingRequestFlags flags);

@@ -5,6 +5,8 @@ namespace Everything.Net.Internal;
 internal sealed class EverythingNativeAdapter : IEverythingNativeAdapter
 {
     public string ExpectedDllName => EverythingNative.ExpectedDllName;
+    public EverythingSdkVersion SdkVersion => EverythingSdkVersion.V2;
+    public string? LoadedLibraryPath => EverythingNativeLibraryLocator.GetLoadedPath(NativeLibraryResolver.Sdk2FileName);
 
     public bool IsDbLoaded() => EverythingNative.IsDbLoaded();
     public void SetSearch(string value) => EverythingNative.SetSearch(value);

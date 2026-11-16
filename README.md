@@ -15,14 +15,14 @@ Supported target frameworks:
 
 ## Supported architectures
 
-- Windows x64 via `Everything64.dll`
-- Windows ARM64 via `EverythingARM64.dll`
+- Windows x64
+- Windows ARM64
 
 ## Requirements
 
 - Windows
-- Everything installed and running
-- Matching native SDK DLL deployed with your app or packaged through `runtimes/.../native`
+- Everything 1.4 or 1.5 installed and running
+- The native SDK DLL, which the package brings with it (see [Native DLL](#native-dll))
 
 ## Registration
 
@@ -115,9 +115,40 @@ var response = await client.SearchAsync(new EverythingQuery
 });
 ```
 
-## Native DLL packaging
+## Everything versions and SDKs
 
-The NuGet package includes the native Everything SDK DLLs as runtime assets:
+Everything has two SDKs, and the client supports both:
 
-- `runtimes/win-x64/native/Everything64.dll`
-- `runtimes/win-arm64/native/EverythingARM64.dll`
+| SDK | Made for | DLL | How it talks to Everything |
+|---|---|---|---|
+| 2 | Everything 1.4 (also works with 1.5) | `Everything64.dll`, `EverythingARM64.dll` | Window messages |
+| 3 | Everything 1.5 only | `Everything3_x64.dll`, `Everything3_ARM64.dll` | Named pipes |
+
+By default the client decides on every call: if Everything 1.5 answers on its pipe it uses SDK 3, otherwise SDK 2.
+The same queries, options and result types work with both.
+
+```csharp
+services.AddEverythingClient(options =>
+{
+    options.SdkVersion = EverythingSdkVersion.V2;   // or V3; the default is Auto
+    options.InstanceName = "1.5a";                  // SDK 3 only; by default the unnamed instance, then "1.5a"
+});
+
+var client = (EverythingClient)provider.GetRequiredService<IEverythingClient>();
+client.Search(EverythingQuery.Default("*.txt"));
+Console.WriteLine(client.SdkVersion);        // V2 or V3: what the last call used
+Console.WriteLine(client.NativeLibraryPath); // the DLL it loaded
+```
+
+## Native DLL
+
+Each SDK DLL is looked for in this order, and the first one found is loaded:
+
+1. `EverythingClientOptions.NativeLibraryPath`, if you set it (the folder that contains the DLLs, or one of the DLLs).
+2. The folder Everything is installed in: `<install>\sdk\dll`, then `<install>`. The install folder is read from the machine-wide registry.
+3. The copy bundled with this package, under `runtimes/win-x64/native` and `runtimes/win-arm64/native`.
+
+The Everything installer does not include the SDK DLLs, so most machines use the bundled copies. Step 2 only applies
+if you have put an SDK into the install folder yourself. Set `PreferInstalledNativeLibrary = false` to skip it.
+
+Each DLL is loaded once per process, so the options of the first client that is created decide where from.
